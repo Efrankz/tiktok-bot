@@ -1,1 +1,116 @@
-selenium==4.11.0
+import requests
+import random
+import logging
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
+from webdriver_manager.chrome import ChromeDriverManager
+from faker import Faker
+from concurrent.futures import ThreadPoolExecutor
+from itertools import cycle
+
+# Configuration
+tiktok_url = 'https://www.tiktok.com'
+report_reason = 'Violation of community guidelines'
+proxyscrape_url = 'https://api.proxyscrape.com/v2/?request=displayproxies&protocol=all'
+
+# Initialize Faker for dynamic user-agent generation
+fake = Faker()
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger()
+
+# Function to fetch proxies from ProxyScrape
+def fetch_proxies():
+    try:
+        response = requests.get(proxyscrape_url)
+        response.raise_for_status()  # Raise an HTTPError for bad responses
+        proxies = response.text.split('\n')
+        return [proxy.strip() for proxy in proxies if proxy.strip()]
+    except requests.RequestException as e:
+        logger.error(f"Failed to fetch proxies: {e}")
+        return []
+
+# Function to set up Selenium WebDriver with proxy and user agent
+def setup_webdriver(proxy):
+    chrome_options = Options()
+    chrome_options.add_argument(f'--proxy-server={proxy}')
+    chrome_options.add_argument(f'user-agent={fake.user_agent()}')
+    chrome_options.add_argument('--headless')  # Run in headless mode for faster execution
+    chrome_options.add_argument('--no-sandbox')
+    chrome_options.add_argument('--disable-dev-shm-usage')
+    
+    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
+    return driver
+
+# Function to report a TikTok user
+def report_user(driver, user_id):
+    try:
+        driver.get(f"{tiktok_url}/@{user_id}")
+        
+        # Dynamic element selectors
+        report_button = driver.find_element(By.XPATH, '//button[contains(text(), "Report")]')
+        report_button.click()
+
+        reason_buttons = driver.find_elements(By.XPATH, '//button[contains(@class, "report-reason")]')
+        for button in reason_buttons:
+            if report_reason in button.text:
+                button.click()
+                break
+
+        submit_button = driver.find_element(By.XPATH, '//button[contains(text(), "Submit")]')
+        submit_button.click()
+
+        logger.info(f"Reported user {user_id} successfully")
+    except Exception as e:
+        logger.error(f"Failed to report user {user_id}: {e}")
+
+# Function to handle proxy chaining and reporting
+def report_with_proxies(user_id, proxies):
+    proxy_cycle = cycle(proxies)  # Create a cycle to rotate proxies
+    driver = None
+
+    for proxy in proxy_cycle:
+        try:
+            logger.info(f"Using proxy: {proxy}")
+            driver = setup_webdriver(proxy)
+            report_user(driver, user_id)
+            return True  # Successfully reported
+        except Exception as e:
+            logger.error(f"Failed with proxy: {proxy}, retrying... {e}")
+        finally:
+            if driver:
+                driver.quit()
+
+    return False  # Failed after retries
+
+# Main function with concurrent execution for faster reporting
+def main():
+    user_id = input("Enter the TikTok username to report: ").strip()
+    if not user_id:
+        logger.error("No username provided")
+        return
+
+    proxies = fetch_proxies()
+    if not proxies:
+        logger.warning("No proxies available")
+        return
+
+    random.shuffle(proxies)  # Shuffle proxies for better distribution
+
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        futures = [executor.submit(report_with_proxies, user_id, proxies) for _ in range(10)]
+        results = [future.result() for future in futures]
+
+    if any(results):
+        logger.info("Reporting completed successfully")
+    else:
+        logger.error("Failed to report user after several attempts")
+
+    # Displaying the "Made by SleepTheGod" message
+    logger.info("Made by SleepTheGod")
+
+if __name__ == "__main__":
+    main(josy2cutefrlssz)
